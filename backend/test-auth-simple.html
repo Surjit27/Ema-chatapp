@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App - Authentication Test</title>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        input { width: 300px; }
+        textarea {
+            resize: vertical;
+            font-family: monospace;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        .success { color: green; }
+        .error { color: red; }
+        .token {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 12px;
+            margin: 10px 0;
+        }
+        #status { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Chat App Authentication Test</h1>
+        
+        <div style="background: #e7f3ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #007bff;">
+            <strong>📋 Quick Start:</strong>
+            <ol style="margin: 10px 0; padding-left: 20px;">
+                <li>Copy your token from <code>backend/token.txt</code></li>
+                <li>Paste it in the "Your JWT Token" section below</li>
+                <li>Click "Load Token"</li>
+                <li>Click "Connect to WebSocket" to test!</li>
+            </ol>
+            <p style="margin: 5px 0; font-size: 12px; color: #666;">
+                Or register/login to get a new token automatically.
+            </p>
+        </div>
+
+        <!-- Register Section -->
+        <div class="section">
+            <h2>1. Register New User</h2>
+            <input type="text" id="regUsername" placeholder="Username" value="testuser">
+            <input type="email" id="regEmail" placeholder="Email" value="test@test.com">
+            <input type="password" id="regPassword" placeholder="Password" value="Test123">
+            <button onclick="register()">Register</button>
+            <div id="registerResult"></div>
+        </div>
+
+        <!-- Login Section -->
+        <div class="section">
+            <h2>2. Login</h2>
+            <input type="email" id="loginEmail" placeholder="Email" value="test@test.com">
+            <input type="password" id="loginPassword" placeholder="Password" value="Test123">
+            <button onclick="login()">Login</button>
+            <div id="loginResult"></div>
+        </div>
+
+        <!-- Token Display -->
+        <div class="section">
+            <h2>3. Your JWT Token</h2>
+            <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
+                💡 <strong>Quick Load:</strong> Copy token from <code>backend/token.txt</code> and paste below, or register/login to get a new one.
+            </p>
+            <textarea id="tokenInput" placeholder="Paste your token from token.txt here, or it will auto-fill after register/login" style="width: 100%; min-height: 60px; padding: 10px; font-family: monospace; font-size: 11px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px;"></textarea>
+            <button onclick="loadTokenFromInput()">Load Token</button>
+            <button onclick="loadTokenFromFile()">Load from File</button>
+            <div id="tokenDisplay" class="token" style="margin-top: 10px;">No token loaded yet.</div>
+            <button onclick="testProtectedRoute()" style="margin-top: 10px;">Test Protected Route</button>
+            <div id="protectedResult"></div>
+        </div>
+
+        <!-- WebSocket Connection -->
+        <div class="section">
+            <h2>4. WebSocket Connection</h2>
+            <button onclick="connectWebSocket()">Connect to WebSocket</button>
+            <button onclick="disconnectWebSocket()">Disconnect</button>
+            <div id="status" class="disconnected">Disconnected</div>
+            <div id="wsMessages"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+        let socket = null;
+        let currentToken = null;
+
+        // Load token from localStorage on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedToken = localStorage.getItem('jwt_token');
+            if (savedToken) {
+                currentToken = savedToken;
+                document.getElementById('tokenInput').value = savedToken;
+                document.getElementById('tokenDisplay').textContent = savedToken;
+                document.getElementById('tokenDisplay').innerHTML = 
+                    `<span style="color: green;">✅ Token loaded from storage</span><br>${savedToken}`;
+            }
+        });
+
+        // Load token from input field
+        function loadTokenFromInput() {
+            const token = document.getElementById('tokenInput').value.trim();
+            if (!token) {
+                alert('Please paste a token first!');
+                return;
+            }
+            currentToken = token;
+            document.getElementById('tokenDisplay').textContent = token;
+            localStorage.setItem('jwt_token', token);
+            document.getElementById('tokenDisplay').innerHTML = 
+                `<span style="color: green;">✅ Token loaded!</span><br>${token}`;
+        }
+
+        // Load token from file (user selects file)
+        function loadTokenFromFile() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.txt';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const token = event.target.result.trim();
+                    if (token) {
+                        currentToken = token;
+                        document.getElementById('tokenInput').value = token;
+                        document.getElementById('tokenDisplay').textContent = token;
+                        localStorage.setItem('jwt_token', token);
+                        document.getElementById('tokenDisplay').innerHTML = 
+                            `<span style="color: green;">✅ Token loaded from file!</span><br>${token}`;
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+
+        // Register function
+        async function register() {
+            const username = document.getElementById('regUsername').value;
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+
+            try {
+                const response = await fetch(`${API_URL}/api/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('registerResult').innerHTML = 
+                        `<span class="success">✅ Registered successfully!</span>`;
+                    currentToken = data.token;
+                    document.getElementById('tokenInput').value = data.token;
+                    document.getElementById('tokenDisplay').textContent = data.token;
+                    document.getElementById('loginEmail').value = email;
+                    localStorage.setItem('jwt_token', data.token);
+                } else {
+                    document.getElementById('registerResult').innerHTML = 
+                        `<span class="error">❌ Error: ${data.message || data.error}</span>`;
+                }
+            } catch (error) {
+                document.getElementById('registerResult').innerHTML = 
+                    `<span class="error">❌ Error: ${error.message}</span>`;
+            }
+        }
+
+        // Login function
+        async function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const response = await fetch(`${API_URL}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('loginResult').innerHTML = 
+                        `<span class="success">✅ Logged in successfully!</span>`;
+                    currentToken = data.token;
+                    document.getElementById('tokenInput').value = data.token;
+                    document.getElementById('tokenDisplay').textContent = data.token;
+                    localStorage.setItem('jwt_token', data.token);
+                } else {
+                    document.getElementById('loginResult').innerHTML = 
+                        `<span class="error">❌ Error: ${data.message || data.error}</span>`;
+                }
+            } catch (error) {
+                document.getElementById('loginResult').innerHTML = 
+                    `<span class="error">❌ Error: ${error.message}</span>`;
+            }
+        }
+
+        // Test protected route
+        async function testProtectedRoute() {
+            if (!currentToken) {
+                document.getElementById('protectedResult').innerHTML = 
+                    `<span class="error">❌ No token available. Please register or login first.</span>`;
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/api/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('protectedResult').innerHTML = 
+                        `<span class="success">✅ Protected route accessed! User: ${data.user.username}</span>`;
+                } else {
+                    document.getElementById('protectedResult').innerHTML = 
+                        `<span class="error">❌ Error: ${data.message || data.error}</span>`;
+                }
+            } catch (error) {
+                document.getElementById('protectedResult').innerHTML = 
+                    `<span class="error">❌ Error: ${error.message}</span>`;
+            }
+        }
+
+        // Connect to WebSocket
+        function connectWebSocket() {
+            if (!currentToken) {
+                alert('Please register or login first to get a token!');
+                return;
+            }
+
+            if (socket && socket.connected) {
+                alert('Already connected!');
+                return;
+            }
+
+            socket = io(API_URL, {
+                auth: { token: currentToken }
+            });
+
+            socket.on('connect', () => {
+                document.getElementById('status').textContent = '✅ Connected! Socket ID: ' + socket.id;
+                document.getElementById('status').className = 'connected';
+                addMessage('✅ Connected to WebSocket server');
+            });
+
+            socket.on('connect_error', (error) => {
+                document.getElementById('status').textContent = '❌ Connection Error: ' + error.message;
+                document.getElementById('status').className = 'disconnected';
+                addMessage('❌ Connection failed: ' + error.message);
+            });
+
+            socket.on('disconnect', () => {
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'disconnected';
+                addMessage('❌ Disconnected from server');
+            });
+
+            socket.on('user:status', (data) => {
+                addMessage(`👤 User ${data.userId} is now ${data.status}`);
+            });
+
+            socket.on('message:new', (message) => {
+                addMessage(`📨 New message: ${message.content}`);
+            });
+
+            socket.on('error', (error) => {
+                addMessage(`❌ Error: ${error.message}`);
+            });
+        }
+
+        // Disconnect WebSocket
+        function disconnectWebSocket() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+        }
+
+        // Add message to WebSocket messages
+        function addMessage(msg) {
+            const div = document.createElement('div');
+            div.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+            document.getElementById('wsMessages').appendChild(div);
+        }
+    </script>
+</body>
+</html>
+
